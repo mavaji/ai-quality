@@ -1,0 +1,609 @@
+openapi: 3.0.3
+info:
+  title: Kafka Producer Service API
+  version: 1.0.0
+  description: |
+    REST API for high-performance Kafka message publishing service.
+    Supports batch and individual message publishing with delivery guarantees.
+  contact:
+    name: SDD Kafka Producer Team
+    email: team@example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+
+paths:
+  # Message Publishing Endpoints
+  /messages:
+    post:
+      summary: Publish single message
+      description: Publish a single message to a Kafka topic with delivery confirmation
+      operationId: publishMessage
+      tags:
+        - Publishing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishMessageRequest'
+            examples:
+              simple_message:
+                summary: Simple JSON message
+                value:
+                  topic: "user-events"
+                  payload: '{"userId": 12345, "action": "login", "timestamp": "2025-11-03T10:00:00Z"}'
+              with_partition_key:
+                summary: Message with partition key
+                value:
+                  topic: "order-events"
+                  partitionKey: "user:12345"
+                  payload: '{"orderId": 67890, "status": "completed"}'
+                  headers:
+                    "source": "order-service"
+                    "version": "1.0"
+      responses:
+        '201':
+          description: Message published successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Message too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable (all brokers down)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /messages/batch:
+    post:
+      summary: Publish batch of messages
+      description: Publish multiple messages as a batch for optimal throughput
+      operationId: publishBatch
+      tags:
+        - Publishing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishBatchRequest'
+            examples:
+              mixed_topics:
+                summary: Batch with multiple topics
+                value:
+                  messages:
+                    - topic: "user-events"
+                      payload: '{"userId": 1, "action": "signup"}'
+                    - topic: "order-events"
+                      partitionKey: "user:1"
+                      payload: '{"orderId": 101, "amount": 25.99}'
+      responses:
+        '201':
+          description: Batch published successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublishBatchResponse'
+        '400':
+          description: Invalid batch request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Batch too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Status and Health Endpoints
+  /health:
+    get:
+      summary: Health check
+      description: Check service health including broker connectivity
+      operationId: getHealth
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /metrics:
+    get:
+      summary: Get service metrics
+      description: Retrieve performance metrics and statistics
+      operationId: getMetrics
+      tags:
+        - Monitoring
+      responses:
+        '200':
+          description: Metrics retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsResponse'
+            text/plain:
+              schema:
+                type: string
+                description: Prometheus format metrics
+
+  /messages/{messageId}/status:
+    get:
+      summary: Get message status
+      description: Check the delivery status of a specific message
+      operationId: getMessageStatus
+      tags:
+        - Tracking
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Unique message identifier returned from publish request
+      responses:
+        '200':
+          description: Message status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageStatusResponse'
+        '404':
+          description: Message not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Configuration Management
+  /config:
+    get:
+      summary: Get current configuration
+      description: Retrieve current producer configuration (excluding sensitive data)
+      operationId: getConfiguration
+      tags:
+        - Configuration
+      responses:
+        '200':
+          description: Configuration retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigurationResponse'
+
+components:
+  schemas:
+    # Request Schemas
+    PublishMessageRequest:
+      type: object
+      required:
+        - topic
+        - payload
+      properties:
+        topic:
+          type: string
+          pattern: '^[a-zA-Z0-9._-]+$'
+          minLength: 1
+          maxLength: 249
+          description: Target Kafka topic name
+          example: "user-events"
+        partitionKey:
+          type: string
+          maxLength: 1024
+          description: Optional key for partition assignment
+          example: "user:12345"
+        payload:
+          type: string
+          maxLength: 1048576
+          description: Message content (JSON string or base64 encoded binary)
+          example: '{"userId": 12345, "action": "login"}'
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          maxProperties: 10
+          description: Optional message headers
+          example:
+            source: "user-service"
+            version: "1.0"
+        timestamp:
+          type: string
+          format: date-time
+          description: Optional message timestamp (ISO 8601)
+          example: "2025-11-03T10:00:00Z"
+
+    PublishBatchRequest:
+      type: object
+      required:
+        - messages
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishMessageRequest'
+          minItems: 1
+          maxItems: 100
+          description: Array of messages to publish as a batch
+
+    # Response Schemas
+    PublishResponse:
+      type: object
+      required:
+        - messageId
+        - status
+        - timestamp
+      properties:
+        messageId:
+          type: string
+          format: uuid
+          description: Unique identifier for tracking message delivery
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        status:
+          type: string
+          enum: [accepted, queued]
+          description: Initial message status
+          example: "accepted"
+        topic:
+          type: string
+          description: Target topic name
+          example: "user-events"
+        timestamp:
+          type: string
+          format: date-time
+          description: Request processing timestamp
+          example: "2025-11-03T10:00:00.123Z"
+
+    PublishBatchResponse:
+      type: object
+      required:
+        - batchId
+        - messageCount
+        - status
+        - timestamp
+      properties:
+        batchId:
+          type: string
+          format: uuid
+          description: Unique identifier for the batch
+          example: "550e8400-e29b-41d4-a716-446655440001"
+        messageCount:
+          type: integer
+          minimum: 1
+          description: Number of messages in the batch
+          example: 5
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishResponse'
+          description: Individual message responses
+        status:
+          type: string
+          enum: [accepted, partial, failed]
+          description: Overall batch status
+          example: "accepted"
+        timestamp:
+          type: string
+          format: date-time
+          description: Batch processing timestamp
+          example: "2025-11-03T10:00:00.123Z"
+
+    MessageStatusResponse:
+      type: object
+      required:
+        - messageId
+        - status
+        - topic
+        - timestamp
+      properties:
+        messageId:
+          type: string
+          format: uuid
+          description: Message identifier
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        status:
+          type: string
+          enum: [queued, sending, success, failed, timeout, rejected]
+          description: Current message status
+          example: "success"
+        topic:
+          type: string
+          description: Target topic name
+          example: "user-events"
+        partition:
+          type: integer
+          format: int32
+          description: Assigned partition (for successful messages)
+          example: 3
+        offset:
+          type: integer
+          format: int64
+          description: Message offset in partition (for successful messages)
+          example: 12345
+        deliveryLatency:
+          type: integer
+          description: Delivery latency in milliseconds
+          example: 25
+        timestamp:
+          type: string
+          format: date-time
+          description: Status timestamp
+          example: "2025-11-03T10:00:00.148Z"
+        error:
+          $ref: '#/components/schemas/ErrorDetails'
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+        - checks
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy, degraded]
+          description: Overall service health status
+          example: "healthy"
+        timestamp:
+          type: string
+          format: date-time
+          description: Health check timestamp
+          example: "2025-11-03T10:00:00Z"
+        checks:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/HealthCheck'
+          description: Individual component health checks
+          example:
+            brokers:
+              status: "healthy"
+              message: "All 3 brokers reachable"
+              latency: 5
+            producer:
+              status: "healthy" 
+              message: "Producer active with 10 connections"
+
+    HealthCheck:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy, degraded]
+          description: Component health status
+          example: "healthy"
+        message:
+          type: string
+          description: Status description
+          example: "All brokers reachable"
+        latency:
+          type: integer
+          description: Component response latency in milliseconds
+          example: 5
+
+    MetricsResponse:
+      type: object
+      required:
+        - timestamp
+        - performance
+        - throughput
+        - errors
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: Metrics collection timestamp
+          example: "2025-11-03T10:00:00Z"
+        performance:
+          $ref: '#/components/schemas/PerformanceMetrics'
+        throughput:
+          $ref: '#/components/schemas/ThroughputMetrics'
+        errors:
+          $ref: '#/components/schemas/ErrorMetrics'
+        memory:
+          $ref: '#/components/schemas/MemoryMetrics'
+
+    PerformanceMetrics:
+      type: object
+      properties:
+        averageLatency:
+          type: integer
+          description: Average publish latency in milliseconds
+          example: 15
+        p95Latency:
+          type: integer
+          description: 95th percentile latency in milliseconds  
+          example: 45
+        p99Latency:
+          type: integer
+          description: 99th percentile latency in milliseconds
+          example: 125
+
+    ThroughputMetrics:
+      type: object
+      properties:
+        messagesPerSecond:
+          type: integer
+          description: Current messages per second rate
+          example: 15000
+        bytesPerSecond:
+          type: integer
+          description: Current bytes per second rate
+          example: 2500000
+        totalMessages:
+          type: integer
+          format: int64
+          description: Total messages processed since startup
+          example: 1234567
+
+    ErrorMetrics:
+      type: object
+      properties:
+        totalErrors:
+          type: integer
+          format: int64
+          description: Total error count since startup
+          example: 123
+        errorRate:
+          type: number
+          format: float
+          description: Current error rate (percentage)
+          example: 0.1
+        errorsByType:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Error counts by error type
+          example:
+            network: 45
+            timeout: 67
+            broker: 11
+
+    MemoryMetrics:
+      type: object
+      properties:
+        heapSize:
+          type: integer
+          format: int64
+          description: Current heap size in bytes
+          example: 134217728
+        allocatedMemory:
+          type: integer
+          format: int64
+          description: Currently allocated memory in bytes
+          example: 89478485
+        gcPauses:
+          type: integer
+          description: Number of GC pauses in last minute
+          example: 15
+
+    ConfigurationResponse:
+      type: object
+      properties:
+        brokers:
+          type: array
+          items:
+            type: string
+          description: Configured Kafka brokers (excluding credentials)
+          example: ["broker1:9092", "broker2:9092"]
+        batchSettings:
+          type: object
+          properties:
+            maxMessages:
+              type: integer
+              example: 100
+            maxBytes:
+              type: integer
+              example: 16384
+            flushInterval:
+              type: string
+              example: "5ms"
+        retryPolicy:
+          type: object
+          properties:
+            maxAttempts:
+              type: integer
+              example: 3
+            initialBackoff:
+              type: string
+              example: "100ms"
+            maxBackoff:
+              type: string
+              example: "30s"
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+        - timestamp
+      properties:
+        error:
+          type: string
+          description: Error type or code
+          example: "INVALID_REQUEST"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Topic name cannot be empty"
+        details:
+          type: object
+          description: Additional error context
+          additionalProperties: true
+        timestamp:
+          type: string
+          format: date-time
+          description: Error occurrence timestamp
+          example: "2025-11-03T10:00:00Z"
+
+    ErrorDetails:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [network, serialization, broker, timeout, configuration]
+          description: Error category
+          example: "timeout"
+        message:
+          type: string
+          description: Error description
+          example: "Request timeout after 30s"
+        code:
+          type: string
+          description: Kafka-specific error code
+          example: "REQUEST_TIMED_OUT"
+        retryAttempt:
+          type: integer
+          description: Retry attempt number
+          example: 2
+
+  # Security Schemes (for future authentication)
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token authentication (future enhancement)
+
+# Global tags for organization
+tags:
+  - name: Publishing
+    description: Message publishing operations
+  - name: Health  
+    description: Service health and status
+  - name: Monitoring
+    description: Metrics and performance monitoring
+  - name: Tracking
+    description: Message status tracking
+  - name: Configuration
+    description: Service configuration management
