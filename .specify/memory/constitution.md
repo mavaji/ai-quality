@@ -1,50 +1,58 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+Sync Impact Report:
+- Version change: New constitution (v1.0.0)
+- Added sections: Core Principles, Performance Standards, Development Workflow, Governance
+- Principles added: Code Quality First, Testing Standards, User Experience Consistency, Performance Requirements
+- Templates requiring updates: ✅ plan-template.md aligned, ✅ spec-template.md aligned, ✅ tasks-template.md aligned
+- Follow-up TODOs: None
+-->
+
+# SDD Kafka Producer Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Code Quality First
+Code MUST be maintainable, readable, and follow established patterns. All code MUST pass linting and type checking before commit. No dead code, no magic numbers, no TODO comments in production. Clear naming conventions MUST be followed - functions describe actions, variables describe data. Code reviews MUST verify quality standards before merge.
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+**Rationale**: High-quality code reduces bugs, improves maintainability, and enables faster development velocity over time.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### II. Testing Standards (NON-NEGOTIABLE)
+Test-Driven Development MUST be followed: write tests first, ensure they fail, then implement. Unit tests MUST cover all business logic. Integration tests MUST verify Kafka producer functionality, message serialization, and error handling. Contract tests MUST validate message schemas and API interfaces. All tests MUST pass before any code merge.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+**Rationale**: Kafka producers handle critical data flows where failures can cascade through systems. Comprehensive testing prevents data loss and ensures reliability.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### III. User Experience Consistency
+All interfaces (CLI, API, configuration) MUST follow consistent patterns. Error messages MUST be clear, actionable, and include context. Configuration MUST be validated with helpful error messages. Operations MUST provide appropriate feedback (success/failure states). Documentation MUST match actual behavior.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+**Rationale**: Consistent interfaces reduce cognitive load, improve adoption, and reduce support overhead.
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+### IV. Performance Requirements
+Producer MUST handle minimum 10,000 messages/second with <100ms p95 latency. Memory usage MUST stay under 512MB for sustained operations. Batch processing MUST be optimized for throughput. Connection pooling and resource management MUST prevent resource leaks. Performance degradation MUST be detected and reported.
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+**Rationale**: Kafka producers are performance-critical components where poor performance affects entire data pipelines.
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+## Performance Standards
+
+**Throughput**: Minimum 10,000 msg/sec sustained, target 50,000 msg/sec burst  
+**Latency**: <50ms p50, <100ms p95, <500ms p99  
+**Memory**: <512MB steady state, <1GB peak  
+**CPU**: <50% utilization at target throughput  
+**Reliability**: 99.9% message delivery success rate  
+**Monitoring**: All metrics MUST be exposed via standard observability interfaces
+
+## Development Workflow
+
+**Code Review**: All changes require review. Constitution compliance MUST be verified.  
+**Testing Gates**: Unit tests (100% pass), integration tests (100% pass), performance benchmarks (within limits).  
+**Quality Gates**: Linting (zero violations), type checking (zero errors), security scanning (no high/critical).  
+**Release Process**: Semantic versioning MUST be followed. Breaking changes require MAJOR version bump and migration guide.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+This constitution supersedes all other development practices. Amendments require team consensus and formal documentation. All pull requests MUST demonstrate compliance with these principles. Complexity that violates simplicity principles MUST be justified with clear business need and simpler alternatives ruled out.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Compliance Review**: Constitution adherence checked in every PR review  
+**Amendment Process**: Requires unanimous team approval and impact analysis  
+**Exception Handling**: Temporary exceptions require time-bound remediation plan
+
+**Version**: 1.0.0 | **Ratified**: 2025-11-03 | **Last Amended**: 2025-11-03
