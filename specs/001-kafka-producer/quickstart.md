@@ -7,8 +7,9 @@
 ## Prerequisites
 
 - Go 1.21+ installed
-- Kafka cluster running (local or remote)
 - Basic understanding of Kafka topics and partitions
+
+**Note**: This quickstart uses a mock Kafka producer for demonstration. For production use with real Kafka clusters, see the configuration section for proper broker setup.
 
 ## Quick Setup
 
@@ -70,9 +71,9 @@ logging:
 
 Expected output:
 ```
-{"level":"info","timestamp":"2025-11-03T10:00:00Z","message":"Starting Kafka Producer Service"}
-{"level":"info","timestamp":"2025-11-03T10:00:00Z","message":"Connected to brokers: [localhost:9092]"}
-{"level":"info","timestamp":"2025-11-03T10:00:00Z","message":"HTTP server listening on :8080"}
+{"level":"info","timestamp":"2025-11-03T16:21:57.986+1100","caller":"kafka-producer/main.go:66","msg":"Starting Kafka Producer Service","version":"dev","build_time":"unknown","git_commit":"unknown","config_path":"configs/kafka-producer.yaml"}
+{"level":"info","timestamp":"2025-11-03T16:21:57.987+1100","caller":"kafka-producer/main.go:117","msg":"All services started successfully"}
+{"level":"info","timestamp":"2025-11-03T16:21:57.987+1100","caller":"server/server.go:63","msg":"Starting HTTP server","component":"server","address":"0.0.0.0:8080","read_timeout":30,"write_timeout":30}
 ```
 
 ## Basic Usage
@@ -89,17 +90,41 @@ Response:
 ```json
 {
   "status": "healthy",
-  "timestamp": "2025-11-03T10:00:00Z",
+  "timestamp": "2025-11-03T16:29:03.701284+11:00",
   "checks": {
-    "brokers": {
+    "service": {
       "status": "healthy",
-      "message": "All 1 brokers reachable",
-      "latency": 5
-    },
-    "producer": {
-      "status": "healthy",
-      "message": "Producer active with 1 connections"
+      "message": "Service is running",
+      "latency": 417
     }
+  }
+}
+```
+
+### Service Configuration
+
+Check current service configuration and API limits:
+
+```bash
+curl http://localhost:8080/api/v1/config
+```
+
+Response:
+```json
+{
+  "timestamp": "2025-11-03T16:22:25.452635+11:00",
+  "version": "1.0.0",
+  "endpoints": [
+    "/api/v1/messages",
+    "/api/v1/messages/batch",
+    "/api/v1/metrics",
+    "/api/v1/config",
+    "/api/v1/health"
+  ],
+  "limits": {
+    "max_message_size": 1048576,
+    "max_batch_size": 100,
+    "max_headers": 50
   }
 }
 ```
@@ -113,29 +138,31 @@ curl -X POST http://localhost:8080/api/v1/messages \
   -H "Content-Type: application/json" \
   -d '{
     "topic": "test-events",
-    "payload": "{\"userId\": 12345, \"action\": \"signup\", \"timestamp\": \"2025-11-03T10:00:00Z\"}"
+    "value": "{\"userId\": 12345, \"action\": \"signup\", \"timestamp\": \"2025-11-03T10:00:00Z\"}"
   }'
 ```
 
 Response:
 ```json
 {
-  "messageId": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "accepted",
+  "message_id": "msg-1762147412008415000-1fbc141e",
+  "status": "success",
   "topic": "test-events",
-  "timestamp": "2025-11-03T10:00:00.123Z"
+  "partition": 0,
+  "offset": 123456,
+  "delivered_at": "2025-11-03T16:23:32.008435+11:00"
 }
 ```
 
-#### With Partition Key
+#### With Partition Key and Headers
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/messages \
   -H "Content-Type: application/json" \
   -d '{
     "topic": "user-events",
-    "partitionKey": "user:12345",
-    "payload": "{\"userId\": 12345, \"action\": \"login\"}",
+    "key": "user:12345",
+    "value": "{\"userId\": 12345, \"action\": \"login\"}",
     "headers": {
       "source": "web-app",
       "version": "1.0"
@@ -152,35 +179,68 @@ curl -X POST http://localhost:8080/api/v1/messages/batch \
     "messages": [
       {
         "topic": "user-events",
-        "partitionKey": "user:1",
-        "payload": "{\"userId\": 1, \"action\": \"signup\"}"
+        "key": "user:1",
+        "value": "{\"userId\": 1, \"action\": \"signup\"}"
       },
       {
         "topic": "user-events", 
-        "partitionKey": "user:2",
-        "payload": "{\"userId\": 2, \"action\": \"login\"}"
+        "key": "user:2",
+        "value": "{\"userId\": 2, \"action\": \"login\"}"
       }
     ]
   }'
 ```
 
+Response:
+```json
+{
+  "results": [
+    {
+      "message_id": "msg-1762147421763050000-ec172a22",
+      "status": "success",
+      "topic": "user-events",
+      "partition": 0,
+      "offset": 123457,
+      "delivered_at": "2025-11-03T16:23:41.763062+11:00"
+    },
+    {
+      "message_id": "msg-1762147421763064000-0b129a26",
+      "status": "success",
+      "topic": "user-events",
+      "partition": 0,
+      "offset": 123458,
+      "delivered_at": "2025-11-03T16:23:41.763064+11:00"
+    }
+  ],
+  "success_count": 2,
+  "failure_count": 0,
+  "total_count": 2
+}
+```
+
 ### Check Message Status
 
 ```bash
-# Use the messageId from publish response
-curl http://localhost:8080/api/v1/messages/550e8400-e29b-41d4-a716-446655440000/status
+# Use the message_id from publish response
+curl http://localhost:8080/api/v1/messages/msg-1762147412008415000-1fbc141e/status
 ```
 
 Response for successful delivery:
 ```json
 {
-  "messageId": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "success",
+  "message_id": "msg-1762147412008415000-1fbc141e",
   "topic": "test-events",
-  "partition": 0,
-  "offset": 12345,
-  "deliveryLatency": 25,
-  "timestamp": "2025-11-03T10:00:00.148Z"
+  "current_state": "success",
+  "receipt": {
+    "message_id": "msg-1762147412008415000-1fbc141e",
+    "topic": "test-events",
+    "partition": 0,
+    "offset": 123456,
+    "delivered_at": "2025-11-03T16:23:32.008435+11:00",
+    "status": "success"
+  },
+  "created_at": "2025-11-03T16:23:32.008400+11:00",
+  "updated_at": "2025-11-03T16:23:32.008435+11:00"
 }
 ```
 
@@ -195,7 +255,7 @@ Generate test load:
 for i in {1..100}; do
   curl -X POST http://localhost:8080/api/v1/messages \
     -H "Content-Type: application/json" \
-    -d "{\"topic\": \"load-test\", \"payload\": \"{\\\"messageId\\\": $i}\"}" &
+    -d "{\"topic\": \"load-test\", \"value\": \"{\\\"messageId\\\": $i}\"}" &
 done
 wait
 ```
@@ -208,24 +268,20 @@ Check real-time metrics:
 curl http://localhost:8080/api/v1/metrics
 ```
 
-Response includes throughput and latency metrics:
+Response includes service metrics:
 ```json
 {
-  "timestamp": "2025-11-03T10:00:00Z",
-  "performance": {
-    "averageLatency": 15,
-    "p95Latency": 45,
-    "p99Latency": 125
+  "timestamp": "2025-11-03T16:22:33.430204+11:00",
+  "status": "operational",
+  "producer": {
+    "status": "connected",
+    "messages_sent_total": 0,
+    "messages_failed_total": 0
   },
-  "throughput": {
-    "messagesPerSecond": 15000,
-    "bytesPerSecond": 2500000,
-    "totalMessages": 100
-  },
-  "errors": {
-    "totalErrors": 0,
-    "errorRate": 0.0,
-    "errorsByType": {}
+  "system": {
+    "memory_usage": 0,
+    "cpu_usage": 0,
+    "goroutines": 0
   }
 }
 ```
@@ -314,7 +370,7 @@ monitoring:
 
 **Check message status**:
 ```bash
-curl http://localhost:8080/api/v1/messages/{messageId}/status
+curl http://localhost:8080/api/v1/messages/{message_id}/status
 ```
 
 **Common causes**:
