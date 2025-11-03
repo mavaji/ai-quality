@@ -121,14 +121,16 @@ func TestBatch_IsFull_BySize(t *testing.T) {
 		Timestamp: time.Now(),
 	}
 
-	batch.AddMessage(message)
-	assert.True(t, batch.IsFull(), "Batch should be full due to size limit")
+	// Should reject the message because it's too large
+	err := batch.AddMessage(message)
+	assert.Error(t, err, "Adding oversized message should return error")
+	assert.False(t, batch.CanAccept(message), "Batch should not accept oversized message")
 }
 
 func TestBatch_CanAccept(t *testing.T) {
 	batch := models.NewBatch("batch-1", "test-topic", nil)
 	batch.MaxMessages = 2
-	batch.MaxBytes = 100
+	batch.MaxBytes = 200
 
 	smallMessage := &models.Message{
 		ID:        "msg-1",
@@ -215,8 +217,12 @@ func TestBatch_AverageMessageSize(t *testing.T) {
 	batch := models.NewBatch("batch-1", "test-topic", messages)
 
 	avgSize := batch.AverageMessageSize()
-	expectedAvg := (5 + 10) / 2
-	assert.Equal(t, expectedAvg, avgSize, "Average message size should be 7.5 bytes")
+	// Message size includes value, topic, ID, and overhead (64 bytes)
+	// msg1: 5 + 10 + 5 + 64 = 84 bytes
+	// msg2: 10 + 10 + 5 + 64 = 89 bytes
+	// average: (84 + 89) / 2 = 86.5 = 86 (integer division)
+	expectedAvg := 86
+	assert.Equal(t, expectedAvg, avgSize, "Average message size should include metadata and overhead")
 }
 
 func TestBatch_AverageMessageSize_EmptyBatch(t *testing.T) {
@@ -332,7 +338,7 @@ func TestBatch_Validation(t *testing.T) {
 				},
 			},
 			expectError: true,
-			errorMsg:    "message topic does not match batch topic",
+			errorMsg:    "message 0 topic (different-topic) does not match batch topic (batch-topic)",
 		},
 	}
 

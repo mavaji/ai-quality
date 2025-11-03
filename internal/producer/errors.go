@@ -12,6 +12,25 @@ import (
 type ErrorType = models.ErrorType
 type ErrorSeverity = models.ErrorSeverity
 
+// Re-export error types and severities as constants
+const (
+	ErrorTypeNetwork        = models.ErrorTypeNetwork
+	ErrorTypeTimeout        = models.ErrorTypeTimeout
+	ErrorTypeBroker         = models.ErrorTypeBroker
+	ErrorTypeAuthentication = models.ErrorTypeAuthentication
+	ErrorTypeAuthorization  = models.ErrorTypeAuthorization
+	ErrorTypeValidation     = models.ErrorTypeValidation
+	ErrorTypeConfiguration  = models.ErrorTypeConfiguration
+	ErrorTypeSerialization  = models.ErrorTypeSerialization
+	ErrorTypeUnknown        = models.ErrorTypeUnknown
+	ErrorTypeCustom         = models.ErrorTypeCustom
+
+	ErrorSeverityLow      = models.ErrorSeverityLow
+	ErrorSeverityMedium   = models.ErrorSeverityMedium
+	ErrorSeverityHigh     = models.ErrorSeverityHigh
+	ErrorSeverityCritical = models.ErrorSeverityCritical
+)
+
 // RetryStrategy defines different retry strategies
 type RetryStrategy string
 

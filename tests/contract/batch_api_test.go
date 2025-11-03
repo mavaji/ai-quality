@@ -13,6 +13,8 @@ import (
 	"go.uber.org/zap"
 
 	"sdd-kafka-producer/internal/config"
+	"sdd-kafka-producer/internal/health"
+	"sdd-kafka-producer/internal/producer"
 	"sdd-kafka-producer/internal/server"
 )
 
@@ -20,7 +22,14 @@ func TestBatchAPI_PublishBatch(t *testing.T) {
 	// Setup test server
 	cfg := createTestConfig()
 	logger, _ := zap.NewDevelopment()
-	srv := server.New(cfg, logger)
+	healthManager := health.NewManager(30*time.Second, logger)
+	srv := server.New(cfg.Server, logger, healthManager)
+
+	// Setup handler manager with mock producer
+	mockProducer := producer.NewMockProducer()
+	messageTracker := producer.NewMessageTracker(logger, 1000, 24*time.Hour)
+	handlerManager := server.NewHandlerManager(mockProducer, messageTracker, logger, srv)
+	handlerManager.RegisterRoutes()
 
 	tests := []struct {
 		name           string
@@ -34,35 +43,35 @@ func TestBatchAPI_PublishBatch(t *testing.T) {
 			requestBody: map[string]interface{}{
 				"messages": []map[string]interface{}{
 					{
-						"topic":   "test-topic-1",
-						"payload": `{"userId": 1, "action": "login"}`,
+						"topic": "test-topic-1",
+						"value": `{"userId": 1, "action": "login"}`,
 						"headers": map[string]string{
 							"source": "user-service",
 						},
 					},
 					{
-						"topic":        "test-topic-2",
-						"partitionKey": "user:123",
-						"payload":      `{"orderId": 456, "status": "completed"}`,
-						"timestamp":    time.Now().Format(time.RFC3339),
+						"topic":     "test-topic-2",
+						"key":       "user:123",
+						"value":     `{"orderId": 456, "status": "completed"}`,
+						"timestamp": time.Now().Format(time.RFC3339),
 					},
 				},
 			},
 			expectedStatus: http.StatusCreated,
-			expectedFields: []string{"batchId", "messageCount", "status", "timestamp", "messages"},
+			expectedFields: []string{"total_count", "success_count", "failure_count", "results"},
 		},
 		{
 			name: "single message in batch",
 			requestBody: map[string]interface{}{
 				"messages": []map[string]interface{}{
 					{
-						"topic":   "single-topic",
-						"payload": `{"test": "data"}`,
+						"topic": "single-topic",
+						"value": `{"test": "data"}`,
 					},
 				},
 			},
 			expectedStatus: http.StatusCreated,
-			expectedFields: []string{"batchId", "messageCount", "status", "timestamp"},
+			expectedFields: []string{"total_count", "success_count", "failure_count"},
 		},
 		{
 			name: "empty batch",
@@ -83,8 +92,8 @@ func TestBatchAPI_PublishBatch(t *testing.T) {
 			requestBody: map[string]interface{}{
 				"messages": []map[string]interface{}{
 					{
-						"topic":   "", // Empty topic
-						"payload": `{"test": "data"}`,
+						"topic": "", // Empty topic
+						"value": `{"test": "data"}`,
 					},
 				},
 			},
@@ -96,8 +105,8 @@ func TestBatchAPI_PublishBatch(t *testing.T) {
 			requestBody: map[string]interface{}{
 				"messages": []map[string]interface{}{
 					{
-						"topic":   "test-topic",
-						"payload": generateLargePayload(2 * 1024 * 1024), // 2MB payload
+						"topic": "test-topic",
+						"value": generateLargePayload(2 * 1024 * 1024), // 2MB payload
 					},
 				},
 			},
@@ -117,8 +126,8 @@ func TestBatchAPI_PublishBatch(t *testing.T) {
 			requestBody: map[string]interface{}{
 				"messages": []map[string]interface{}{
 					{
-						"topic":   "invalid@topic!name",
-						"payload": `{"test": "data"}`,
+						"topic": "invalid@topic!name",
+						"value": `{"test": "data"}`,
 					},
 				},
 			},
@@ -130,9 +139,9 @@ func TestBatchAPI_PublishBatch(t *testing.T) {
 			requestBody: map[string]interface{}{
 				"messages": []map[string]interface{}{
 					{
-						"topic":        "test-topic",
-						"partitionKey": generateLongString(2000), // Exceeds partition key limit
-						"payload":      `{"test": "data"}`,
+						"topic": "test-topic",
+						"key":   generateLongString(2000), // Exceeds partition key limit
+						"value": `{"test": "data"}`,
 					},
 				},
 			},
@@ -144,8 +153,8 @@ func TestBatchAPI_PublishBatch(t *testing.T) {
 			requestBody: map[string]interface{}{
 				"messages": []map[string]interface{}{
 					{
-						"topic":   "test-topic",
-						"payload": `{"test": "data"}`,
+						"topic": "test-topic",
+						"value": `{"test": "data"}`,
 						"headers": map[string]interface{}{
 							"valid-header":   "value",
 							"invalid-header": 12345, // Non-string value
@@ -162,7 +171,7 @@ func TestBatchAPI_PublishBatch(t *testing.T) {
 				"messages": []map[string]interface{}{
 					{
 						"topic":     "test-topic",
-						"payload":   `{"test": "data"}`,
+						"value":     `{"test": "data"}`,
 						"timestamp": "invalid-timestamp",
 					},
 				},
@@ -175,12 +184,12 @@ func TestBatchAPI_PublishBatch(t *testing.T) {
 			requestBody: map[string]interface{}{
 				"messages": []map[string]interface{}{
 					{
-						"topic":   "valid-topic",
-						"payload": `{"valid": "message"}`,
+						"topic": "valid-topic",
+						"value": `{"valid": "message"}`,
 					},
 					{
-						"topic":   "", // Invalid empty topic
-						"payload": `{"invalid": "message"}`,
+						"topic": "", // Invalid empty topic
+						"value": `{"invalid": "message"}`,
 					},
 				},
 			},
@@ -217,30 +226,23 @@ func TestBatchAPI_PublishBatch(t *testing.T) {
 				}
 
 				// Verify specific field types and values
-				if batchID, ok := responseBody["batchId"]; ok {
-					assert.IsType(t, "", batchID, "batchId should be a string")
-					assert.NotEmpty(t, batchID, "batchId should not be empty")
+				if totalCount, ok := responseBody["total_count"]; ok {
+					assert.IsType(t, float64(0), totalCount, "total_count should be a number")
+					assert.Greater(t, totalCount, float64(0), "total_count should be > 0")
 				}
 
-				if messageCount, ok := responseBody["messageCount"]; ok {
-					assert.IsType(t, float64(0), messageCount, "messageCount should be a number")
-					assert.Greater(t, messageCount, float64(0), "messageCount should be > 0")
+				if successCount, ok := responseBody["success_count"]; ok {
+					assert.IsType(t, float64(0), successCount, "success_count should be a number")
+					assert.GreaterOrEqual(t, successCount, float64(0), "success_count should be >= 0")
 				}
 
-				if status, ok := responseBody["status"]; ok {
-					assert.IsType(t, "", status, "status should be a string")
-					validStatuses := []string{"accepted", "partial", "failed"}
-					assert.Contains(t, validStatuses, status, "status should be valid")
+				if failureCount, ok := responseBody["failure_count"]; ok {
+					assert.IsType(t, float64(0), failureCount, "failure_count should be a number")
+					assert.GreaterOrEqual(t, failureCount, float64(0), "failure_count should be >= 0")
 				}
 
-				if timestamp, ok := responseBody["timestamp"]; ok {
-					assert.IsType(t, "", timestamp, "timestamp should be a string")
-					_, err := time.Parse(time.RFC3339Nano, timestamp.(string))
-					assert.NoError(t, err, "timestamp should be valid RFC3339 format")
-				}
-
-				if messages, ok := responseBody["messages"]; ok {
-					assert.IsType(t, []interface{}{}, messages, "messages should be an array")
+				if results, ok := responseBody["results"]; ok {
+					assert.IsType(t, []interface{}{}, results, "results should be an array")
 				}
 			} else {
 				// Error response - verify error field
@@ -267,7 +269,14 @@ func TestBatchAPI_PublishBatch(t *testing.T) {
 func TestBatchAPI_ContentTypeValidation(t *testing.T) {
 	cfg := createTestConfig()
 	logger, _ := zap.NewDevelopment()
-	srv := server.New(cfg, logger)
+	healthManager := health.NewManager(30*time.Second, logger)
+	srv := server.New(cfg.Server, logger, healthManager)
+
+	// Setup handler manager with mock producer
+	mockProducer2 := producer.NewMockProducer()
+	messageTracker2 := producer.NewMessageTracker(logger, 1000, 24*time.Hour)
+	handlerManager2 := server.NewHandlerManager(mockProducer2, messageTracker2, logger, srv)
+	handlerManager2.RegisterRoutes()
 
 	tests := []struct {
 		name           string
@@ -304,8 +313,8 @@ func TestBatchAPI_ContentTypeValidation(t *testing.T) {
 	validRequestBody := map[string]interface{}{
 		"messages": []map[string]interface{}{
 			{
-				"topic":   "test-topic",
-				"payload": `{"test": "data"}`,
+				"topic": "test-topic",
+				"value": `{"test": "data"}`,
 			},
 		},
 	}
@@ -331,7 +340,14 @@ func TestBatchAPI_ContentTypeValidation(t *testing.T) {
 func TestBatchAPI_MethodValidation(t *testing.T) {
 	cfg := createTestConfig()
 	logger, _ := zap.NewDevelopment()
-	srv := server.New(cfg, logger)
+	healthManager := health.NewManager(30*time.Second, logger)
+	srv := server.New(cfg.Server, logger, healthManager)
+
+	// Setup handler manager with mock producer
+	mockProducer3 := producer.NewMockProducer()
+	messageTracker3 := producer.NewMessageTracker(logger, 1000, 24*time.Hour)
+	handlerManager3 := server.NewHandlerManager(mockProducer3, messageTracker3, logger, srv)
+	handlerManager3.RegisterRoutes()
 
 	methods := []struct {
 		method         string
@@ -349,8 +365,8 @@ func TestBatchAPI_MethodValidation(t *testing.T) {
 	validRequestBody := map[string]interface{}{
 		"messages": []map[string]interface{}{
 			{
-				"topic":   "test-topic",
-				"payload": `{"test": "data"}`,
+				"topic": "test-topic",
+				"value": `{"test": "data"}`,
 			},
 		},
 	}
@@ -379,13 +395,20 @@ func TestBatchAPI_MethodValidation(t *testing.T) {
 func TestBatchAPI_ResponseHeaders(t *testing.T) {
 	cfg := createTestConfig()
 	logger, _ := zap.NewDevelopment()
-	srv := server.New(cfg, logger)
+	healthManager := health.NewManager(30*time.Second, logger)
+	srv := server.New(cfg.Server, logger, healthManager)
+
+	// Setup handler manager with mock producer
+	mockProducer4 := producer.NewMockProducer()
+	messageTracker4 := producer.NewMessageTracker(logger, 1000, 24*time.Hour)
+	handlerManager4 := server.NewHandlerManager(mockProducer4, messageTracker4, logger, srv)
+	handlerManager4.RegisterRoutes()
 
 	requestBody := map[string]interface{}{
 		"messages": []map[string]interface{}{
 			{
-				"topic":   "test-topic",
-				"payload": `{"test": "data"}`,
+				"topic": "test-topic",
+				"value": `{"test": "data"}`,
 			},
 		},
 	}
@@ -413,13 +436,20 @@ func TestBatchAPI_RateLimiting(t *testing.T) {
 
 	cfg := createTestConfig()
 	logger, _ := zap.NewDevelopment()
-	srv := server.New(cfg, logger)
+	healthManager := health.NewManager(30*time.Second, logger)
+	srv := server.New(cfg.Server, logger, healthManager)
+
+	// Setup handler manager with mock producer
+	mockProducer5 := producer.NewMockProducer()
+	messageTracker5 := producer.NewMessageTracker(logger, 1000, 24*time.Hour)
+	handlerManager5 := server.NewHandlerManager(mockProducer5, messageTracker5, logger, srv)
+	handlerManager5.RegisterRoutes()
 
 	requestBody := map[string]interface{}{
 		"messages": []map[string]interface{}{
 			{
-				"topic":   "rate-limit-topic",
-				"payload": `{"test": "data"}`,
+				"topic": "rate-limit-topic",
+				"value": `{"test": "data"}`,
 			},
 		},
 	}
@@ -499,8 +529,8 @@ func generateLargeBatch(count int) []map[string]interface{} {
 	messages := make([]map[string]interface{}, count)
 	for i := 0; i < count; i++ {
 		messages[i] = map[string]interface{}{
-			"topic":   "test-topic",
-			"payload": `{"test": "data"}`,
+			"topic": "test-topic",
+			"value": `{"test": "data"}`,
 		}
 	}
 	return messages

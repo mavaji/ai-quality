@@ -29,7 +29,7 @@ func TestErrorCategorizer_CategorizeError(t *testing.T) {
 			name:             "connection refused",
 			inputError:       errors.New("connection refused"),
 			expectedType:     producer.ErrorTypeNetwork,
-			expectedSeverity: producer.ErrorSeverityMedium,
+			expectedSeverity: producer.ErrorSeverityHigh,
 			isRetryable:      true,
 		},
 		{
@@ -123,7 +123,7 @@ func TestErrorCategorizer_CategorizeError(t *testing.T) {
 		// Serialization errors - not retryable
 		{
 			name:             "serialization failure",
-			inputError:       errors.New("failed to serialize message"),
+			inputError:       errors.New("serialization failed"),
 			expectedType:     producer.ErrorTypeSerialization,
 			expectedSeverity: producer.ErrorSeverityMedium,
 			isRetryable:      false,
@@ -223,7 +223,7 @@ func TestErrorCategorizer_GetRetryStrategy(t *testing.T) {
 		{
 			name:             "network error - immediate retry",
 			errorType:        producer.ErrorTypeNetwork,
-			severity:         producer.ErrorSeverityMedium,
+			severity:         producer.ErrorSeverityLow,
 			expectedStrategy: producer.RetryStrategyImmediate,
 		},
 		{

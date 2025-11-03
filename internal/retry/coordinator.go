@@ -133,8 +133,6 @@ func (c *Coordinator) ExecuteWithRetry(
 	topic string,
 	operation RetryableOperation,
 ) *RetryResult {
-	startTime := time.Now()
-
 	c.logger.Info("Starting retry operation",
 		zap.String("operation_id", operationID),
 		zap.String("message_id", messageID),

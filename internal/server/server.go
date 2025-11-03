@@ -193,3 +193,8 @@ func (s *Server) AddHandler(pattern string, handler http.Handler) {
 func (s *Server) GetMux() *http.ServeMux {
 	return s.mux
 }
+
+// Handler returns the server's HTTP handler (for testing)
+func (s *Server) Handler() http.Handler {
+	return s.server.Handler
+}
