@@ -3,8 +3,11 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"mime"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +16,38 @@ import (
 	"sdd-kafka-producer/internal/models"
 	"sdd-kafka-producer/internal/producer"
 )
+
+// Error types for specific validation failures
+var (
+	ErrMessageTooLarge = errors.New("message exceeds size limit")
+	ErrBatchTooLarge   = errors.New("batch exceeds size limit")
+
+	// validTopicNameRegex defines valid Kafka topic name pattern
+	validTopicNameRegex = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+)
+
+// validateContentType checks if the request has valid JSON content type
+func validateContentType(r *http.Request) error {
+	contentType := r.Header.Get("Content-Type")
+
+	// Check if Content-Type is missing
+	if contentType == "" {
+		return fmt.Errorf("missing Content-Type header")
+	}
+
+	// Parse content type to handle charset parameters
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return fmt.Errorf("invalid Content-Type format: %w", err)
+	}
+
+	// Check if media type is application/json
+	if mediaType != "application/json" {
+		return fmt.Errorf("unsupported media type: %s, expected application/json", mediaType)
+	}
+
+	return nil
+}
 
 // HandlerManager manages HTTP handlers and their dependencies
 type HandlerManager struct {
@@ -68,10 +103,10 @@ type BatchMessageRequest struct {
 
 // BatchMessageResponse represents a response for batch publishing
 type BatchMessageResponse struct {
-	Results     []MessageResponse `json:"results"`
-	SuccessCount int              `json:"success_count"`
-	FailureCount int              `json:"failure_count"`
-	TotalCount   int              `json:"total_count"`
+	Results      []MessageResponse `json:"results"`
+	SuccessCount int               `json:"success_count"`
+	FailureCount int               `json:"failure_count"`
+	TotalCount   int               `json:"total_count"`
 }
 
 // handleMessages handles the POST /api/v1/messages endpoint
@@ -83,32 +118,53 @@ func (h *HandlerManager) handleMessages(w http.ResponseWriter, r *http.Request) 
 		// CORS preflight is handled by middleware
 		w.WriteHeader(http.StatusOK)
 	default:
-		h.server.writeErrorResponse(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", 
+		h.server.writeErrorResponse(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED",
 			"Only POST method is supported for this endpoint", nil)
 	}
 }
 
 // postMessage handles posting a single message
 func (h *HandlerManager) postMessage(w http.ResponseWriter, r *http.Request) {
+	// Validate content type
+	if err := validateContentType(r); err != nil {
+		if strings.Contains(err.Error(), "missing Content-Type") {
+			h.server.writeErrorResponse(w, http.StatusBadRequest, "MISSING_CONTENT_TYPE",
+				err.Error(), nil)
+		} else if strings.Contains(err.Error(), "unsupported media type") {
+			h.server.writeErrorResponse(w, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE",
+				err.Error(), nil)
+		} else {
+			h.server.writeErrorResponse(w, http.StatusBadRequest, "INVALID_CONTENT_TYPE",
+				err.Error(), nil)
+		}
+		return
+	}
+
 	// Parse request body
 	var req MessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.server.writeErrorResponse(w, http.StatusBadRequest, "INVALID_JSON", 
+		h.server.writeErrorResponse(w, http.StatusBadRequest, "INVALID_JSON",
 			"Request body is not valid JSON", err.Error())
 		return
 	}
 
 	// Validate request
 	if err := h.validateMessageRequest(&req); err != nil {
-		h.server.writeErrorResponse(w, http.StatusBadRequest, "VALIDATION_ERROR", 
-			err.Error(), nil)
+		// Check for size-related errors
+		if errors.Is(err, ErrMessageTooLarge) {
+			h.server.writeErrorResponse(w, http.StatusRequestEntityTooLarge, "MESSAGE_TOO_LARGE",
+				err.Error(), nil)
+		} else {
+			h.server.writeErrorResponse(w, http.StatusBadRequest, "VALIDATION_ERROR",
+				err.Error(), nil)
+		}
 		return
 	}
 
 	// Convert request to message model
 	message, err := h.requestToMessage(&req)
 	if err != nil {
-		h.server.writeErrorResponse(w, http.StatusBadRequest, "INVALID_MESSAGE", 
+		h.server.writeErrorResponse(w, http.StatusBadRequest, "INVALID_MESSAGE",
 			err.Error(), nil)
 		return
 	}
@@ -117,7 +173,7 @@ func (h *HandlerManager) postMessage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	receipt, err := h.producer.PublishMessage(ctx, message)
 	if err != nil {
-		h.logger.Error("Failed to publish message", 
+		h.logger.Error("Failed to publish message",
 			zap.String("topic", message.Topic),
 			zap.String("key", message.Key),
 			zap.Error(err))
@@ -125,7 +181,7 @@ func (h *HandlerManager) postMessage(w http.ResponseWriter, r *http.Request) {
 		// Determine appropriate HTTP status code based on error
 		statusCode := http.StatusInternalServerError
 		errorCode := "PUBLISH_ERROR"
-		
+
 		// Handle specific error cases
 		if ctx.Err() != nil {
 			if ctx.Err() == context.DeadlineExceeded {
@@ -137,7 +193,7 @@ func (h *HandlerManager) postMessage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		h.server.writeErrorResponse(w, statusCode, errorCode, 
+		h.server.writeErrorResponse(w, statusCode, errorCode,
 			"Failed to publish message", err.Error())
 		return
 	}
@@ -170,6 +226,11 @@ func (h *HandlerManager) validateMessageRequest(req *MessageRequest) error {
 		return fmt.Errorf("topic name cannot exceed 255 characters")
 	}
 
+	// Validate topic name contains only valid characters
+	if !validTopicNameRegex.MatchString(req.Topic) {
+		return fmt.Errorf("topic name contains invalid characters; only alphanumeric, dots, underscores, and hyphens are allowed")
+	}
+
 	// Validate key length
 	if len(req.Key) > 1024 {
 		return fmt.Errorf("key cannot exceed 1024 characters")
@@ -177,7 +238,7 @@ func (h *HandlerManager) validateMessageRequest(req *MessageRequest) error {
 
 	// Validate value size (1MB limit)
 	if len(req.Value) > 1024*1024 {
-		return fmt.Errorf("message value cannot exceed 1MB")
+		return fmt.Errorf("%w: message value cannot exceed 1MB", ErrMessageTooLarge)
 	}
 
 	// Validate headers
@@ -254,23 +315,44 @@ func (h *HandlerManager) receiptToResponse(receipt *models.DeliveryReceipt) Mess
 // handleMessagesBatch handles the POST /api/v1/messages/batch endpoint
 func (h *HandlerManager) handleMessagesBatch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		h.server.writeErrorResponse(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", 
+		h.server.writeErrorResponse(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED",
 			"Only POST method is supported for this endpoint", nil)
+		return
+	}
+
+	// Validate content type
+	if err := validateContentType(r); err != nil {
+		if strings.Contains(err.Error(), "missing Content-Type") {
+			h.server.writeErrorResponse(w, http.StatusBadRequest, "MISSING_CONTENT_TYPE",
+				err.Error(), nil)
+		} else if strings.Contains(err.Error(), "unsupported media type") {
+			h.server.writeErrorResponse(w, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE",
+				err.Error(), nil)
+		} else {
+			h.server.writeErrorResponse(w, http.StatusBadRequest, "INVALID_CONTENT_TYPE",
+				err.Error(), nil)
+		}
 		return
 	}
 
 	// Parse request body
 	var req BatchMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.server.writeErrorResponse(w, http.StatusBadRequest, "INVALID_JSON", 
+		h.server.writeErrorResponse(w, http.StatusBadRequest, "INVALID_JSON",
 			"Request body is not valid JSON", err.Error())
 		return
 	}
 
 	// Validate batch request
 	if err := h.validateBatchRequest(&req); err != nil {
-		h.server.writeErrorResponse(w, http.StatusBadRequest, "VALIDATION_ERROR", 
-			err.Error(), nil)
+		// Check for size-related errors
+		if errors.Is(err, ErrBatchTooLarge) || errors.Is(err, ErrMessageTooLarge) {
+			h.server.writeErrorResponse(w, http.StatusRequestEntityTooLarge, "BATCH_TOO_LARGE",
+				err.Error(), nil)
+		} else {
+			h.server.writeErrorResponse(w, http.StatusBadRequest, "VALIDATION_ERROR",
+				err.Error(), nil)
+		}
 		return
 	}
 
@@ -312,7 +394,7 @@ func (h *HandlerManager) handleMessagesBatch(w http.ResponseWriter, r *http.Requ
 			}
 			failureCount++
 
-			h.logger.Error("Failed to publish message in batch", 
+			h.logger.Error("Failed to publish message in batch",
 				zap.Int("message_index", i),
 				zap.String("topic", message.Topic),
 				zap.Error(err))
@@ -356,7 +438,7 @@ func (h *HandlerManager) validateBatchRequest(req *BatchMessageRequest) error {
 	}
 
 	if len(req.Messages) > 100 {
-		return fmt.Errorf("batch cannot contain more than 100 messages")
+		return fmt.Errorf("%w: batch cannot contain more than 100 messages", ErrBatchTooLarge)
 	}
 
 	// Validate each message request
@@ -372,7 +454,7 @@ func (h *HandlerManager) validateBatchRequest(req *BatchMessageRequest) error {
 // handleMetrics handles the GET /api/v1/metrics endpoint
 func (h *HandlerManager) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		h.server.writeErrorResponse(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", 
+		h.server.writeErrorResponse(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED",
 			"Only GET method is supported for this endpoint", nil)
 		return
 	}
@@ -383,14 +465,14 @@ func (h *HandlerManager) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		"timestamp": time.Now(),
 		"status":    "operational",
 		"producer": map[string]interface{}{
-			"status": "connected",
-			"messages_sent_total": 0,
+			"status":                "connected",
+			"messages_sent_total":   0,
 			"messages_failed_total": 0,
 		},
 		"system": map[string]interface{}{
 			"memory_usage": 0,
-			"cpu_usage": 0,
-			"goroutines": 0,
+			"cpu_usage":    0,
+			"goroutines":   0,
 		},
 	}
 
@@ -400,7 +482,7 @@ func (h *HandlerManager) handleMetrics(w http.ResponseWriter, r *http.Request) {
 // handleConfig handles the GET /api/v1/config endpoint
 func (h *HandlerManager) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		h.server.writeErrorResponse(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", 
+		h.server.writeErrorResponse(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED",
 			"Only GET method is supported for this endpoint", nil)
 		return
 	}
@@ -411,7 +493,7 @@ func (h *HandlerManager) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"version":   "1.0.0",
 		"endpoints": []string{
 			"/api/v1/messages",
-			"/api/v1/messages/batch", 
+			"/api/v1/messages/batch",
 			"/api/v1/metrics",
 			"/api/v1/config",
 			"/api/v1/health",
@@ -429,7 +511,7 @@ func (h *HandlerManager) handleConfig(w http.ResponseWriter, r *http.Request) {
 // handleMessageStatus handles GET /api/v1/messages/{id}/status endpoint
 func (h *HandlerManager) handleMessageStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		h.server.writeErrorResponse(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", 
+		h.server.writeErrorResponse(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED",
 			"Only GET method is supported for this endpoint", nil)
 		return
 	}
@@ -438,7 +520,7 @@ func (h *HandlerManager) handleMessageStatus(w http.ResponseWriter, r *http.Requ
 	// Expected format: /api/v1/messages/{id}/status
 	path := r.URL.Path
 	if !strings.HasPrefix(path, "/api/v1/messages/") {
-		h.server.writeErrorResponse(w, http.StatusNotFound, "ENDPOINT_NOT_FOUND", 
+		h.server.writeErrorResponse(w, http.StatusNotFound, "ENDPOINT_NOT_FOUND",
 			"Invalid endpoint format", nil)
 		return
 	}
@@ -446,16 +528,16 @@ func (h *HandlerManager) handleMessageStatus(w http.ResponseWriter, r *http.Requ
 	// Remove prefix to get the rest of the path
 	remaining := strings.TrimPrefix(path, "/api/v1/messages/")
 	parts := strings.Split(remaining, "/")
-	
+
 	if len(parts) != 2 || parts[1] != "status" {
-		h.server.writeErrorResponse(w, http.StatusNotFound, "ENDPOINT_NOT_FOUND", 
+		h.server.writeErrorResponse(w, http.StatusNotFound, "ENDPOINT_NOT_FOUND",
 			"Expected format: /api/v1/messages/{id}/status", nil)
 		return
 	}
 
 	messageID := parts[0]
 	if messageID == "" {
-		h.server.writeErrorResponse(w, http.StatusBadRequest, "INVALID_MESSAGE_ID", 
+		h.server.writeErrorResponse(w, http.StatusBadRequest, "INVALID_MESSAGE_ID",
 			"Message ID cannot be empty", nil)
 		return
 	}
@@ -463,13 +545,13 @@ func (h *HandlerManager) handleMessageStatus(w http.ResponseWriter, r *http.Requ
 	// Get status from tracker
 	status, err := h.tracker.GetStatus(messageID)
 	if err != nil {
-		h.server.writeErrorResponse(w, http.StatusNotFound, "MESSAGE_NOT_FOUND", 
+		h.server.writeErrorResponse(w, http.StatusNotFound, "MESSAGE_NOT_FOUND",
 			fmt.Sprintf("Message %s not found", messageID), nil)
 		return
 	}
 
 	h.server.writeJSONResponse(w, http.StatusOK, status)
-	
+
 	h.logger.Debug("Message status retrieved",
 		zap.String("message_id", messageID),
 		zap.String("current_state", string(status.CurrentState)))
