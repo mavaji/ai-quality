@@ -2,7 +2,10 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Validation constants
@@ -330,30 +333,24 @@ func validateBrokerAddress(broker string) error {
 		return fmt.Errorf("broker address cannot be empty")
 	}
 
-	// Simple validation for host:port format
-	parts := strings.Split(broker, ":")
-	if len(parts) != 2 {
-		return fmt.Errorf("broker address must be in format 'host:port'")
+	// Use net.SplitHostPort for proper host:port parsing
+	host, portStr, err := net.SplitHostPort(broker)
+	if err != nil {
+		return fmt.Errorf("broker address must be in host:port format: %w", err)
 	}
 
-	host := parts[0]
-	port := parts[1]
-
+	// Validate host
 	if host == "" {
 		return fmt.Errorf("host cannot be empty")
 	}
 
-	if port == "" {
-		return fmt.Errorf("port cannot be empty")
+	// Validate port
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return fmt.Errorf("invalid port number: %w", err)
 	}
 
-	// Basic port validation
-	var portNum int
-	if n, err := fmt.Sscanf(port, "%d", &portNum); n != 1 || err != nil {
-		return fmt.Errorf("port must be a valid number")
-	}
-
-	if portNum < MinPort || portNum > MaxPort {
+	if port < MinPort || port > MaxPort {
 		return fmt.Errorf("port must be between %d and %d", MinPort, MaxPort)
 	}
 

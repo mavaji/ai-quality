@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-
-	"sdd-kafka-producer/internal/models"
 )
 
 // CircuitState represents the state of a circuit breaker

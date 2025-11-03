@@ -2,7 +2,6 @@ package producer
 
 import (
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 

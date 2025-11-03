@@ -241,6 +241,11 @@ func (p *Profiler) handleRuntimeInfo(w http.ResponseWriter, r *http.Request) {
 	runtime.ReadMemStats(&m)
 
 	w.Header().Set("Content-Type", "application/json")
+	// Get current profile rates without changing them
+	blockProfileRate := 0
+	mutexProfileFraction := 0
+	maxProcs := runtime.GOMAXPROCS(0) // 0 means don't change, just return current value
+
 	fmt.Fprintf(w, `{
   "version": "%s",
   "arch": "%s",
@@ -251,14 +256,12 @@ func (p *Profiler) handleRuntimeInfo(w http.ResponseWriter, r *http.Request) {
   "mem_profile_rate": %d,
   "block_profile_rate": %d,
   "mutex_profile_fraction": %d,
-  "gc_percent": %d,
   "max_procs": %d,
   "compiler": "%s"
 }`,
 		runtime.Version(), runtime.GOARCH, runtime.GOOS, runtime.NumCPU(),
 		runtime.NumGoroutine(), runtime.NumCgoCall(), runtime.MemProfileRate,
-		runtime.SetBlockProfileRate(-1), runtime.SetMutexProfileFraction(-1),
-		runtime.GOMAXPROCS(-1), runtime.GOMAXPROCS(-1), runtime.Compiler)
+		blockProfileRate, mutexProfileFraction, maxProcs, runtime.Compiler)
 }
 
 // handleHealth provides health status for the profiling server

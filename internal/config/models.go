@@ -2,21 +2,19 @@ package config
 
 import (
 	"fmt"
-	"net"
-	"strconv"
 	"strings"
 	"time"
 )
 
 // ProducerConfigurationModel represents the validated producer configuration
 type ProducerConfigurationModel struct {
-	Brokers           []string
+	Brokers             []string
 	SerializationFormat SerializationFormat
-	BatchSettings     BatchConfigModel
-	RetryPolicy       RetryConfigModel
-	TimeoutSettings   TimeoutConfigModel
-	SecurityConfig    SecurityConfigModel
-	CompressionType   CompressionType
+	BatchSettings       BatchConfigModel
+	RetryPolicy         RetryConfigModel
+	TimeoutSettings     TimeoutConfigModel
+	SecurityConfig      SecurityConfigModel
+	CompressionType     CompressionType
 }
 
 // SerializationFormat enum for supported serialization formats
@@ -132,36 +130,6 @@ func (p *ProducerConfigurationModel) validateBrokers() error {
 		if err := validateBrokerAddress(broker); err != nil {
 			return fmt.Errorf("invalid broker address at index %d (%s): %w", i, broker, err)
 		}
-	}
-
-	return nil
-}
-
-// validateBrokerAddress validates a single broker address
-func validateBrokerAddress(address string) error {
-	if address == "" {
-		return fmt.Errorf("broker address cannot be empty")
-	}
-
-	// Check if it contains host:port format
-	host, portStr, err := net.SplitHostPort(address)
-	if err != nil {
-		return fmt.Errorf("broker address must be in host:port format: %w", err)
-	}
-
-	// Validate host
-	if host == "" {
-		return fmt.Errorf("host cannot be empty")
-	}
-
-	// Validate port
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return fmt.Errorf("invalid port number: %w", err)
-	}
-
-	if port < 1 || port > 65535 {
-		return fmt.Errorf("port must be between 1 and 65535, got %d", port)
 	}
 
 	return nil
