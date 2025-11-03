@@ -52,17 +52,7 @@ func (s *Server) setupRoutes() {
 	// Health check endpoint
 	s.mux.Handle("/api/v1/health", s.healthManager)
 
-	// API v1 endpoints (placeholder for implementation)
-	apiRoutes := map[string]http.HandlerFunc{
-		"/api/v1/messages":       s.notImplementedHandler,
-		"/api/v1/messages/batch": s.notImplementedHandler,
-		"/api/v1/metrics":        s.notImplementedHandler,
-		"/api/v1/config":         s.notImplementedHandler,
-	}
-
-	for pattern, handler := range apiRoutes {
-		s.mux.HandleFunc(pattern, handler)
-	}
+	// API v1 endpoints will be registered by HandlerManager
 
 	// Default handler for unmatched routes
 	s.mux.HandleFunc("/", s.notFoundHandler)

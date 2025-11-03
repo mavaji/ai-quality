@@ -17,6 +17,7 @@ import (
 	"sdd-kafka-producer/internal/config"
 	"sdd-kafka-producer/internal/health"
 	"sdd-kafka-producer/internal/metrics"
+	"sdd-kafka-producer/internal/producer"
 	"sdd-kafka-producer/internal/profiling"
 	"sdd-kafka-producer/internal/server"
 )
@@ -150,6 +151,8 @@ type Application struct {
 	health   *health.Manager
 	metrics  *metrics.Manager
 	profiler *profiling.Profiler
+	producer producer.Producer
+	tracker  *producer.MessageTracker
 	logger   *zap.Logger
 }
 
@@ -169,8 +172,22 @@ func initializeApplication(cfg *config.Config, logger *zap.Logger) (*Application
 	// TODO: Add Kafka broker health check (will be implemented in User Story 1)
 	// healthManager.RegisterChecker(kafkaBrokerChecker)
 
+	// Initialize producer (using mock for now)
+	kafkaProducer := producer.NewMockProducer()
+
+	// Initialize message tracker
+	messageTracker := producer.NewMessageTracker(
+		config.ProducerLogger(logger),
+		1000,         // Max history size
+		24*time.Hour, // Retention time
+	)
+
 	// Initialize HTTP server
 	httpServer := server.New(cfg.Server, config.ServerLogger(logger), healthManager)
+
+	// Initialize handler manager and register routes
+	handlerManager := server.NewHandlerManager(kafkaProducer, messageTracker, config.ServerLogger(logger), httpServer)
+	handlerManager.RegisterRoutes()
 
 	// Initialize profiler
 	profilerConfig := profiling.Config{
@@ -187,6 +204,8 @@ func initializeApplication(cfg *config.Config, logger *zap.Logger) (*Application
 		health:   healthManager,
 		metrics:  metricsManager,
 		profiler: profiler,
+		producer: kafkaProducer,
+		tracker:  messageTracker,
 		logger:   logger,
 	}
 
@@ -225,10 +244,15 @@ func shutdownServices(ctx context.Context, app *Application, logger *zap.Logger)
 		logger.Error("Error shutting down profiling server", zap.Error(err))
 	}
 
-	// TODO: Shutdown Kafka producer (will be implemented in User Story 1)
-	// if err := app.producer.Close(); err != nil {
-	//     logger.Error("Error shutting down Kafka producer", zap.Error(err))
-	// }
+	// Shutdown producer
+	if err := app.producer.Close(); err != nil {
+		logger.Error("Error shutting down Kafka producer", zap.Error(err))
+	}
+
+	// Shutdown message tracker
+	if err := app.tracker.Close(); err != nil {
+		logger.Error("Error shutting down message tracker", zap.Error(err))
+	}
 
 	logger.Info("Service shutdown complete")
 }
