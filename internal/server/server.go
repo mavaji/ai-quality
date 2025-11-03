@@ -24,10 +24,9 @@ type Server struct {
 // New creates a new HTTP server
 func New(cfg config.ServerConfig, logger *zap.Logger, healthManager *health.Manager) *Server {
 	mux := http.NewServeMux()
-	
+
 	server := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-		Handler:      mux,
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
 	}
@@ -46,17 +45,27 @@ func New(cfg config.ServerConfig, logger *zap.Logger, healthManager *health.Mana
 
 // setupRoutes configures HTTP routes
 func (s *Server) setupRoutes() {
-	// Add middleware
-	s.mux.Handle("/", s.loggingMiddleware(s.corsMiddleware(http.HandlerFunc(s.notFoundHandler))))
-	
+	// Add middleware wrapper for all routes
+	handler := s.loggingMiddleware(s.corsMiddleware(s.mux))
+	s.server.Handler = handler
+
 	// Health check endpoint
-	s.mux.Handle("/api/v1/health", s.loggingMiddleware(s.healthManager))
-	
-	// Placeholder for other endpoints (to be added in User Story implementation)
-	s.mux.Handle("/api/v1/messages", s.loggingMiddleware(http.HandlerFunc(s.notImplementedHandler)))
-	s.mux.Handle("/api/v1/messages/batch", s.loggingMiddleware(http.HandlerFunc(s.notImplementedHandler)))
-	s.mux.Handle("/api/v1/metrics", s.loggingMiddleware(http.HandlerFunc(s.notImplementedHandler)))
-	s.mux.Handle("/api/v1/config", s.loggingMiddleware(http.HandlerFunc(s.notImplementedHandler)))
+	s.mux.Handle("/api/v1/health", s.healthManager)
+
+	// API v1 endpoints (placeholder for implementation)
+	apiRoutes := map[string]http.HandlerFunc{
+		"/api/v1/messages":       s.notImplementedHandler,
+		"/api/v1/messages/batch": s.notImplementedHandler,
+		"/api/v1/metrics":        s.notImplementedHandler,
+		"/api/v1/config":         s.notImplementedHandler,
+	}
+
+	for pattern, handler := range apiRoutes {
+		s.mux.HandleFunc(pattern, handler)
+	}
+
+	// Default handler for unmatched routes
+	s.mux.HandleFunc("/", s.notFoundHandler)
 }
 
 // Start starts the HTTP server
@@ -77,7 +86,7 @@ func (s *Server) Start() error {
 // Shutdown gracefully shuts down the HTTP server
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("Shutting down HTTP server")
-	
+
 	if err := s.server.Shutdown(ctx); err != nil {
 		return fmt.Errorf("failed to shutdown HTTP server: %w", err)
 	}
@@ -92,14 +101,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		
+
 		// Wrap ResponseWriter to capture status code
 		wrappedWriter := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-		
+
 		next.ServeHTTP(wrappedWriter, r)
-		
+
 		duration := time.Since(start)
-		
+
 		s.logger.Info("HTTP request",
 			zap.String("method", r.Method),
 			zap.String("path", r.URL.Path),
@@ -117,12 +126,12 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		
+
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		
+
 		next.ServeHTTP(w, r)
 	})
 }
@@ -165,7 +174,7 @@ func (s *Server) writeErrorResponse(w http.ResponseWriter, statusCode int, error
 func (s *Server) writeJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	
+
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		s.logger.Error("Failed to encode JSON response", zap.Error(err))
 		// Write a simple error response if JSON encoding fails

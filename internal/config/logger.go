@@ -84,3 +84,8 @@ func HealthLogger(logger *zap.Logger) *zap.Logger {
 func MetricsLogger(logger *zap.Logger) *zap.Logger {
 	return LoggerWithFields(logger, "metrics")
 }
+
+// ProfilingLogger creates a logger specifically for profiling operations
+func ProfilingLogger(logger *zap.Logger) *zap.Logger {
+	return LoggerWithFields(logger, "profiling")
+}

@@ -13,10 +13,11 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	
+
 	"sdd-kafka-producer/internal/config"
 	"sdd-kafka-producer/internal/health"
 	"sdd-kafka-producer/internal/metrics"
+	"sdd-kafka-producer/internal/profiling"
 	"sdd-kafka-producer/internal/server"
 )
 
@@ -29,7 +30,7 @@ var (
 func main() {
 	// Parse command line flags
 	var (
-		configPath = flag.String("config", "configs/kafka-producer.yaml", "Path to configuration file")
+		configPath  = flag.String("config", "configs/kafka-producer.yaml", "Path to configuration file")
 		showVersion = flag.Bool("version", false, "Show version information")
 	)
 	flag.Parse()
@@ -47,7 +48,7 @@ func main() {
 	}
 
 	// Validate configuration
-	if err := config.ValidateConfiguration(cfg); err != nil {
+	if err := cfg.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "Configuration validation failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -84,7 +85,7 @@ func main() {
 
 	// Start services
 	var wg sync.WaitGroup
-	
+
 	// Start metrics server
 	wg.Add(1)
 	go func() {
@@ -97,7 +98,9 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			startProfilingServer(cfg.Monitoring.ProfilingPort, logger)
+			if err := app.profiler.Start(); err != nil {
+				logger.Error("Profiling server error", zap.Error(err))
+			}
 		}()
 	}
 
@@ -143,10 +146,11 @@ func main() {
 
 // Application holds all application components
 type Application struct {
-	server  *server.Server
-	health  *health.Manager
-	metrics *metrics.Manager
-	logger  *zap.Logger
+	server   *server.Server
+	health   *health.Manager
+	metrics  *metrics.Manager
+	profiler *profiling.Profiler
+	logger   *zap.Logger
 }
 
 // initializeApplication sets up all application components
@@ -156,7 +160,7 @@ func initializeApplication(cfg *config.Config, logger *zap.Logger) (*Application
 
 	// Initialize health check manager
 	healthManager := health.NewManager(30*time.Second, config.HealthLogger(logger))
-	
+
 	// Add basic health checks
 	healthManager.RegisterChecker(health.NewStaticChecker(
 		"service", health.StatusHealthy, "Service is running",
@@ -168,11 +172,22 @@ func initializeApplication(cfg *config.Config, logger *zap.Logger) (*Application
 	// Initialize HTTP server
 	httpServer := server.New(cfg.Server, config.ServerLogger(logger), healthManager)
 
+	// Initialize profiler
+	profilerConfig := profiling.Config{
+		Enabled:              cfg.Monitoring.ProfilingEnabled,
+		Port:                 cfg.Monitoring.ProfilingPort,
+		BlockProfileRate:     0,     // Conservative for production
+		MutexProfileFraction: 0,     // Conservative for production
+		EnableAllocs:         false, // Conservative for production
+	}
+	profiler := profiling.New(profilerConfig, config.ProfilingLogger(logger))
+
 	app := &Application{
-		server:  httpServer,
-		health:  healthManager,
-		metrics: metricsManager,
-		logger:  logger,
+		server:   httpServer,
+		health:   healthManager,
+		metrics:  metricsManager,
+		profiler: profiler,
+		logger:   logger,
 	}
 
 	logger.Info("Application components initialized successfully")
@@ -183,30 +198,16 @@ func initializeApplication(cfg *config.Config, logger *zap.Logger) (*Application
 func startMetricsServer(metricsManager *metrics.Manager, cfg config.MonitoringConfig, logger *zap.Logger) {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", metricsManager.Handler())
-	
+
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.MetricsPort),
 		Handler: mux,
 	}
 
 	logger.Info("Starting metrics server", zap.Int("port", cfg.MetricsPort))
-	
+
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("Metrics server error", zap.Error(err))
-	}
-}
-
-// startProfilingServer starts the pprof profiling server
-func startProfilingServer(port int, logger *zap.Logger) {
-	server := &http.Server{
-		Addr: fmt.Sprintf(":%d", port),
-		Handler: http.DefaultServeMux, // pprof handlers are registered on DefaultServeMux
-	}
-
-	logger.Info("Starting profiling server", zap.Int("port", port))
-	
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		logger.Error("Profiling server error", zap.Error(err))
 	}
 }
 
@@ -217,6 +218,11 @@ func shutdownServices(ctx context.Context, app *Application, logger *zap.Logger)
 	// Shutdown HTTP server
 	if err := app.server.Shutdown(ctx); err != nil {
 		logger.Error("Error shutting down HTTP server", zap.Error(err))
+	}
+
+	// Shutdown profiling server
+	if err := app.profiler.Stop(ctx); err != nil {
+		logger.Error("Error shutting down profiling server", zap.Error(err))
 	}
 
 	// TODO: Shutdown Kafka producer (will be implemented in User Story 1)
