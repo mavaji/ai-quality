@@ -1,0 +1,17 @@
+node_modules/
+.git/
+.gitignore
+README.md
+Dockerfile*
+.dockerignore
+*.log*
+.env*
+coverage/
+.idea/
+.vscode/
+specs/
+docs/
+*.test
+*.out
+.DS_Store
+Thumbs.db

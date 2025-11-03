@@ -1,0 +1,50 @@
+# Kafka Producer Service Configuration
+# Default settings for local development
+
+kafka:
+  brokers: ["localhost:9092"]
+  producer:
+    acks: 1                      # Wait for leader acknowledgment
+    compression: lz4             # Fast compression
+    batch_size: 100             # Messages per batch
+    flush_frequency: 5ms        # Batch timing
+    max_message_bytes: 1048576  # 1MB max message size
+  retry:
+    max_attempts: 3
+    initial_backoff: 100ms
+    max_backoff: 30s
+    backoff_multiplier: 2.0
+  timeouts:
+    connection: 30s
+    request: 60s
+    delivery: 300s
+  security:
+    protocol: PLAINTEXT         # PLAINTEXT, SASL_PLAINTEXT, SASL_SSL, SSL
+    # username: ${KAFKA_USERNAME}
+    # password: ${KAFKA_PASSWORD}
+    # certificate_path: /etc/ssl/kafka-ca.pem
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout: 30s
+  write_timeout: 30s
+  shutdown_timeout: 60s
+
+logging:
+  level: info                   # debug, info, warn, error
+  format: json                  # json, text
+  output: stdout               # stdout, stderr, or file path
+
+monitoring:
+  metrics_port: 9090
+  health_check_interval: 30s
+  profiling_enabled: true
+  profiling_port: 6060
+
+# Performance tuning
+performance:
+  worker_pool_size: 10
+  channel_buffer_size: 1024
+  message_pool_size: 1000
+  batch_pool_size: 100
