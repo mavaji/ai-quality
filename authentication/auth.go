@@ -10,6 +10,11 @@ import (
 )
 
 var ErrInvalidSigningMethod = errors.New("invalid signing method")
+var ErrMissingAuthHeader = errors.New("missing authorization header")
+var ErrInvalidAuthHeaderFormat = errors.New("invalid authorization header format")
+var ErrInvalidTokenSignature = errors.New("invalid token signature")
+var ErrTokenExpired = errors.New("token expired")
+var ErrMissingRequiredClaims = errors.New("missing required claims")
 
 type Config struct {
 	SigningKey    []byte
@@ -21,13 +26,13 @@ func JWTMiddleware(config Config) gin.HandlerFunc {
 		authHeader := c.GetHeader("Authorization")
 
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": ErrMissingAuthHeader.Error()})
 			c.Abort()
 			return
 		}
 
 		if !strings.HasPrefix(authHeader, "Bearer ") {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization header format"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidAuthHeaderFormat.Error()})
 			c.Abort()
 			return
 		}
@@ -42,38 +47,38 @@ func JWTMiddleware(config Config) gin.HandlerFunc {
 		})
 
 		if err != nil {
-			var errorMsg string
+			var authError error
 			switch {
-			case err.Error() == "token has invalid claims: token is expired":
-				errorMsg = "token expired"
-			case errors.Is(err, ErrInvalidSigningMethod) || strings.Contains(err.Error(), "invalid signing method"):
-				errorMsg = "invalid signing method"
+			case strings.Contains(err.Error(), "token has invalid claims: token is expired"):
+				authError = ErrTokenExpired
+			case strings.Contains(err.Error(), "invalid signing method"):
+				authError = ErrInvalidSigningMethod
 			case strings.Contains(err.Error(), "signature is invalid"):
-				errorMsg = "invalid token signature"
+				authError = ErrInvalidTokenSignature
 			default:
-				errorMsg = "invalid token signature"
+				authError = ErrInvalidTokenSignature
 			}
-			c.JSON(http.StatusUnauthorized, gin.H{"error": errorMsg})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": authError.Error()})
 			c.Abort()
 			return
 		}
 
 		if !token.Valid {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token signature"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidTokenSignature.Error()})
 			c.Abort()
 			return
 		}
 
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token signature"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": ErrInvalidTokenSignature.Error()})
 			c.Abort()
 			return
 		}
 
 		userID, exists := claims["user_id"]
 		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "missing required claims"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": ErrMissingRequiredClaims.Error()})
 			c.Abort()
 			return
 		}
